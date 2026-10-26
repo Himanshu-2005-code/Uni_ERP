@@ -1,26 +1,23 @@
 package edu.univ.erp.domain;
 
-public class User {
-    protected int userId;
-    protected String username;
-    protected String role;
-    protected String status;
+import java.time.LocalDateTime;
 
-    public User(int userId, String username, String role, String status) {
-        this.userId = userId;
-        this.username = username;
-        this.role = role;
-        this.status = status;
+/** A login account. */
+public record User(int id, String username, Role role, String status, String fullName, String email,
+                   LocalDateTime lastLogin, LocalDateTime createdAt, int failedAttempts) {
+
+    public String displayName() {
+        return fullName == null || fullName.isBlank() ? username : fullName;
     }
 
-    // Getters and setters
-    public int getUserId() { return userId; }
-    public String getUsername() { return username; }
-    public String getRole() { return role; }
-    public String getStatus() { return status; }
+    public boolean isLocked() {
+        return "LOCKED".equals(status);
+    }
 
-    public void setUserId(int userId) { this.userId = userId; }
-    public void setUsername(String username) { this.username = username; }
-    public void setRole(String role) { this.role = role; }
-    public void setStatus(String status) { this.status = status; }
+    public String initials() {
+        String[] parts = displayName().trim().split("\\s+");
+        String a = parts[0].substring(0, 1);
+        String b = parts.length > 1 ? parts[parts.length - 1].substring(0, 1) : "";
+        return (a + b).toUpperCase();
+    }
 }
