@@ -1,29 +1,25 @@
 package edu.univ.erp;
 
-import edu.univ.erp.ui.LoginFrame;
-import edu.univ.erp.db.Database;
-import com.formdev.flatlaf.FlatLightLaf;
-import javax.swing.*;
+import edu.univ.erp.ui.screen.AppFrame;
+import edu.univ.erp.ui.theme.Theme;
 
+import javax.swing.SwingUtilities;
 
-public class Main {
+/** Campus ERP entry point. */
+public final class Main {
+
+    private Main() {
+    }
+
     public static void main(String[] args) {
-        // Set modern look and feeL using FlatLightLaf
-    
-        try {
-            UIManager.setLookAndFeel(new FlatLightLaf());
-        } catch (Exception ex) {
-            System.err.println("Failed to initialize LaF");
-        }
-
-        // Test database connections first
-        System.out.println("=== Starting University ERP ===");
-        Database.testConnections();
-
-        // Start with login screen
+        System.setProperty("awt.useSystemAAFontSettings", "on");
+        System.setProperty("swing.aatext", "true");
+        System.setProperty("sun.java2d.opengl", System.getProperty("sun.java2d.opengl", "false"));
         SwingUtilities.invokeLater(() -> {
-            new LoginFrame().setVisible(true);
+            Theme.install();
+            AppFrame frame = new AppFrame();
+            frame.setVisible(true);
+            frame.start();
         });
-
     }
 }
