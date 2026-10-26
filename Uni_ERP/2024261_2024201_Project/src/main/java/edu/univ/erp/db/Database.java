@@ -2,75 +2,108 @@ package edu.univ.erp.db;
 
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
+import edu.univ.erp.config.AppConfig;
+
 import java.sql.Connection;
+import java.sql.DriverManager;
 import java.sql.SQLException;
 
-public class Database {
-    private static HikariDataSource authDataSource;
-    private static HikariDataSource erpDataSource;
+/**
+ * Single connection pool for the whole app.
+ *
+ * The pool's default schema is university_erp; login data lives in
+ * university_auth and is always referenced with its schema prefix. Using one
+ * pool means a single transaction can touch both schemas, so creating a user
+ * and their profile is now all-or-nothing.
+ */
+public final class Database {
 
-    static {
-        initializeDataSources();
+    private static volatile HikariDataSource pool;
+
+    private Database() {
     }
 
-    private static void initializeDataSources() {
-        // Auth database configuration
-        HikariConfig authConfig = new HikariConfig();
-        authConfig.setJdbcUrl("jdbc:mysql://localhost:3306/university_auth?useSSL=false&serverTimezone=UTC");
-        authConfig.setUsername("root");
-        authConfig.setPassword("root1234"); // Your MySQL password here
-        authConfig.setDriverClassName("com.mysql.cj.jdbc.Driver");
-        authConfig.setMaximumPoolSize(10);
-        authConfig.setMinimumIdle(2);
-        authConfig.setConnectionTimeout(30000);
-        authConfig.setIdleTimeout(600000);
-        authConfig.setMaxLifetime(1800000);
-
-        authDataSource = new HikariDataSource(authConfig);
-
-        // ERP database configuration
-        HikariConfig erpConfig = new HikariConfig();
-        erpConfig.setJdbcUrl("jdbc:mysql://localhost:3306/university_erp?useSSL=false&serverTimezone=UTC");
-        erpConfig.setUsername("root");
-        erpConfig.setPassword("root1234"); // Your MySQL password here
-        erpConfig.setDriverClassName("com.mysql.cj.jdbc.Driver");
-        erpConfig.setMaximumPoolSize(10);
-        erpConfig.setMinimumIdle(2);
-        erpConfig.setConnectionTimeout(30000);
-        erpConfig.setIdleTimeout(600000);
-        erpConfig.setMaxLifetime(1800000);
-
-        erpDataSource = new HikariDataSource(erpConfig);
+    public static synchronized void start() {
+        if (pool != null) return;
+        AppConfig c = AppConfig.get();
+        HikariConfig hc = new HikariConfig();
+        hc.setPoolName("campus-erp");
+        hc.setJdbcUrl(c.erpUrl());
+        hc.setUsername(c.getUser());
+        hc.setPassword(c.getPassword());
+        hc.setMaximumPoolSize(8);
+        hc.setMinimumIdle(1);
+        hc.setConnectionTimeout(8000);
+        hc.setInitializationFailTimeout(8000);
+        pool = new HikariDataSource(hc);
     }
 
-    public static Connection getAuthConnection() throws SQLException {
-        return authDataSource.getConnection();
-    }
-
-    public static Connection getERPConnection() throws SQLException {
-        return erpDataSource.getConnection();
-    }
-
-    public static void closeDataSources() {
-        if (authDataSource != null) {
-            authDataSource.close();
-        }
-        if (erpDataSource != null) {
-            erpDataSource.close();
+    public static synchronized void stop() {
+        if (pool != null) {
+            pool.close();
+            pool = null;
         }
     }
-    public static void testConnections() {
-        System.out.println("Testing database connections...");
-        try (Connection authConn = getAuthConnection()) {
-            System.out.println("✓ Auth database connection successful");
+
+    public static boolean isStarted() {
+        return pool != null;
+    }
+
+    public static Connection connection() throws SQLException {
+        if (pool == null) start();
+        return pool.getConnection();
+    }
+
+    /** A plain connection to the server without selecting a schema (used before the schema exists). */
+    public static Connection serverConnection() throws SQLException {
+        AppConfig c = AppConfig.get();
+        DriverManager.setLoginTimeout(8);
+        return DriverManager.getConnection(c.serverUrl(), c.getUser(), c.getPassword());
+    }
+
+    @FunctionalInterface
+    public interface SqlWork<T> {
+        T run(Connection c) throws SQLException;
+    }
+
+    @FunctionalInterface
+    public interface SqlAction {
+        void run(Connection c) throws SQLException;
+    }
+
+    /** Runs read-only work on a pooled connection. */
+    public static <T> T read(SqlWork<T> work) {
+        try (Connection c = connection()) {
+            return work.run(c);
         } catch (SQLException e) {
-            System.err.println("✗ Auth database connection failed: " + e.getMessage());
+            throw DbErrors.wrap(e);
         }
+    }
 
-        try (Connection erpConn = getERPConnection()) {
-            System.out.println("✓ ERP database connection successful");
+    /** Runs work in a transaction, committing on success and rolling back on any failure. */
+    public static <T> T tx(SqlWork<T> work) {
+        try (Connection c = connection()) {
+            boolean auto = c.getAutoCommit();
+            c.setAutoCommit(false);
+            try {
+                T result = work.run(c);
+                c.commit();
+                return result;
+            } catch (SQLException | RuntimeException e) {
+                c.rollback();
+                throw e;
+            } finally {
+                c.setAutoCommit(auto);
+            }
         } catch (SQLException e) {
-            System.err.println("✗ ERP database connection failed: " + e.getMessage());
+            throw DbErrors.wrap(e);
         }
+    }
+
+    public static void txRun(SqlAction action) {
+        tx(c -> {
+            action.run(c);
+            return null;
+        });
     }
 }
